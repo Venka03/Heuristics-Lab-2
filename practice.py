@@ -142,12 +142,12 @@ if __name__ == "__main__":
     # 2.1 (7)
     # For each workshop and time slot, ensure at most one jumbo aircraft
     
-    for (x, y) in workshops:
+    '''for (x, y) in workshops:
         for t in time_slots:
-            problem.addConstraint(MaxSumConstraint(1), [f"A_{i}_{t}_{x}_{y}" for i in jumbo_ids])
+            problem.addConstraint(MaxSumConstraint(1), [f"A_{i}_{t}_{x}_{y}" for i in jumbo_ids])'''
 
 
-
+    
     # 6
     # Enforce jumbo adjacency constraint
     for (x, y) in locations:
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     # Solve the problem and generate the output
     sols = problem.getSolutions()
     l = len(sols)
-    solutions = problem.getSolutions()[:10]  # Limit to first 10 solutions
+    solutions = problem.getSolutions()#[:10]  # Limit to first 10 solutions
 
     # Print the number of solutions found in the required format
     print(f"N. Sol: {l}")
