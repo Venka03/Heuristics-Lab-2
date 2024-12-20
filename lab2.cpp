@@ -363,7 +363,7 @@ vector<State> a_star(vector <vector<Cell> > &map, vector<Aircraft>& aircrafts){
         }
         // merge left neighbours with open set for later to take state with smallest f
         openSet = merge(openSet, neighbours); // merge and store result in open set
-        closedSet.push_back(current);
+        closedSet.push_back(current); // mark as visited
     }
     vector<State> path;
     tmp = final;
@@ -376,12 +376,37 @@ vector<State> a_star(vector <vector<Cell> > &map, vector<Aircraft>& aircrafts){
         }
         tmp = cameFrom[tmp];
     }
+    // in case some planes are already at goal but in time moment earlier
+    // time is increased so each plane at final state is at the same time moment
+    if (getMaxTime(path[0]) != getMinTime(path[0])){
+        for (int i=0; i<path[0].aircrafts.size(); i++){
+            if (path[0].aircrafts[i].time != getMaxTime(path[0]))
+                path[0].aircrafts[i].time++;
+        }
+    }
     reverse(path.begin(), path.end()); // reverse it to have from initial to final one
+
     return path;
 
 }
 
+void printPair(ofstream& outFile, pair<int, int> p){
+    outFile << "(" << p.first << ", " << p.second << ")";
+}
 
+void getOperation(ofstream& outFile, pair<int, int> before, pair<int, int> after){
+    if (after.first == before.first && after.second == before.second) {
+        outFile << " w "; // Both pairs are the same
+    } else if (after.first < before.first) {
+        outFile << " ↑ " ; // Second pair is to the left of the first
+    } else if (after.first > before.first) {
+        outFile << " ↓ " ; // Second pair is to the right of the first
+    } else if (after.second < before.second) {
+        outFile << " ← " ; // Second pair is below the first
+    } else if (after.second > before.second) {
+        outFile << " → " ; // Second pair is above the first
+    }
+}
 
 int main(){
     string filename = "map1.csv";
@@ -395,6 +420,29 @@ int main(){
         cerr << "Failed to read the map file.\n";
     }
     vector<State> path = a_star(map, aircrafts);
+
+    // Open file for writing
+    ofstream outFile("map-1.output");
+    if (!outFile) {
+        cerr << "Error opening file for writing!" << std::endl;
+        return 1; // Exit with error code
+    }
+
+    for (int i=0; i<aircrafts.size(); i++){
+        printPair(outFile, aircrafts[i].initialPosition.coordinates);
+        for (int j=1; j<path.size(); j++){
+            if (path[j].aircrafts[i].time != path[j-1].aircrafts[i].time) {// if plane moved in time
+                getOperation(outFile, path[j-1].aircrafts[i].currentPosition.coordinates,
+                             path[j].aircrafts[i].currentPosition.coordinates);
+                printPair(outFile, path[j].aircrafts[i].currentPosition.coordinates);
+            }
+        }
+        outFile << endl;
+    }
+
+    // Close the file
+    outFile.close();
+    /*
     for (auto el: path){
         for (auto i: el.aircrafts){
             cout << i.time << ": (" << i.currentPosition.coordinates.first
@@ -402,5 +450,6 @@ int main(){
         }
         cout << endl;
     }
+     */
     return 0;
 }
