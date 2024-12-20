@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <limits>  // For std::numeric_limits
+#include <chrono>
 using namespace std;
 
 struct Cell
@@ -77,9 +78,9 @@ struct State {
     // mostly by the positions the state is defined
     vector<Aircraft> aircrafts;
     int g;
-    int h;
+    double h;
 
-    int f() const{
+    double f() const{
         return g + h;
     }
     bool operator<(const State& other) const {
@@ -120,25 +121,29 @@ namespace std {
     };
 }
 
-bool readMapCSV(const std::string& filename, int& n, vector<Aircraft>& aircrafts, vector <vector<Cell> > &map){
+bool readMapCSV(const std::string& filename, vector<Aircraft>& aircrafts, vector <vector<Cell> > &map){
+    /*
+     * read csv file that stores data about plane as well as map
+     */
     ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Error opening file " << filename << std::endl;
+        cerr << "Error opening file " << filename << endl;
         return false;
     }
 
-    std::string line;
+    string line;
     
     // Read the number of aircraft (n)
-    std::getline(file, line);
-    std::istringstream(line) >> n;
+    int n;
+    getline(file, line);
+    istringstream(line) >> n;
 
     // Read the aircraft positions (next n lines)
     aircrafts.resize(n);
     for (int i = 0; i < n; ++i) {
-        std::getline(file, line);
-        std::istringstream ss(line);
-        char ch; // To read the parentheses
+        getline(file, line);
+        istringstream ss(line);
+        char ch; // To read the parentheses and comas
         aircrafts[i].id = i;
         ss >> ch >> aircrafts[i].initialPosition.coordinates.first >> ch >> aircrafts[i].initialPosition.coordinates.second >> ch;
         aircrafts[i].initialPosition.state = 'B';
@@ -174,14 +179,14 @@ bool readMapCSV(const std::string& filename, int& n, vector<Aircraft>& aircrafts
 }
 
 vector <Cell> getNeighbours(Cell cell, vector< vector<Cell> > &map){
-    // get all possible neighbour cells to which it is possible to move
+    /*
+     * return all possible neighbour cells to which it is possible to move
+     */
     vector <Cell> neighbours;
     int nx = 0, ny = 0;
     int directions [5][2] = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {0, 0}};
 
     for (int i=0; i<4; i++){
-        //if 0 <= nx < len(grid) and 0 <= ny < len(grid[0]) and grid[nx][ny] != 'G':
-        //neighbors.append((nx, ny))
         nx = cell.coordinates.first + directions[i][0];
         ny = cell.coordinates.second + directions[i][1];
         if (0 <= nx && nx < map.size() && 0 <= ny && ny < map[0].size() && map[nx][ny].state != 'G')
@@ -195,20 +200,36 @@ vector <Cell> getNeighbours(Cell cell, vector< vector<Cell> > &map){
 
 }
 
-int manhattanDistance(Aircraft aircraft){
-    // compute manhattan distance
+double manhattanDistance(Aircraft aircraft){
+    /*
+     * compute manhattan distance from current position to the goal one
+     */
     return abs(aircraft.currentPosition.coordinates.first - aircraft.runwayPosition.coordinates.first)
     + abs(aircraft.currentPosition.coordinates.second - aircraft.runwayPosition.coordinates.second);
 }
 
-int getHeuristic(State state){
+double euclideanDistance(Aircraft aircraft) {
     /*
-     * get heuristics for the state as maximum of manhattan distances of each plane
+     * compute Euclidean distance from the current position to the goal one
      */
-    int max_distance = 0;
+    int x1 = aircraft.currentPosition.coordinates.first, y1 = aircraft.currentPosition.coordinates.second;
+    int x2 = aircraft.runwayPosition.coordinates.first, y2 = aircraft.runwayPosition.coordinates.second;
+    double distance = std::sqrt(std::pow(x2 - x1, 2) + std::pow(y2 - y1, 2));
+    return distance;
+}
+
+double getHeuristic(State state, int heuristic){
+    /*
+     * get heuristics for the state as maximum of manhattan/Euclidean distances of each plane
+     */
+    double max_distance = 0;
     for (auto aircraft: state.aircrafts){
-        if (manhattanDistance(aircraft) > max_distance)
-            max_distance = manhattanDistance(aircraft);
+        if (manhattanDistance(aircraft) > max_distance){
+            if (heuristic == 1)
+                max_distance = manhattanDistance(aircraft);
+            else
+                max_distance = euclideanDistance(aircraft);
+        }
     }
     return max_distance;
 }
@@ -248,7 +269,11 @@ int getMaxTime(State current){
     }
     return max_time;
 }
-vector < State > getNeighbourState(State &current, vector<vector<Cell> > &map){
+vector < State > getNeighbourState(State &current, vector<vector<Cell> > &map, int heuristic){
+    /*
+     * return vector of neighbour states sorted by the function f(expected 'price' of getting to goal from start through node)
+     * neighbour states are the ones that can be reached from the current one in one move that is allowed
+     */
     vector<State> neighbourStates;
 
     int min_time = getMinTime(current);  // compute minimum time moment
@@ -279,7 +304,7 @@ vector < State > getNeighbourState(State &current, vector<vector<Cell> > &map){
             plane.currentPosition = cell;
             state.aircrafts[i] = plane;
             state.g = getMaxTime(state);
-            state.h = getHeuristic(state);
+            state.h = getHeuristic(state, heuristic);
             neighbourStates.push_back(state);
         }
         // go to the following plane and repeat it
@@ -293,6 +318,7 @@ vector < State > getNeighbourState(State &current, vector<vector<Cell> > &map){
 vector<State> merge(vector<State> &first, vector<State> &second){
     /*
      * merge two sorted vectors by value of f of each state
+     * output vector will be sorted in increasing order
      */
     vector<State> merged(first.size() + second.size());
     int i = 0;
@@ -316,12 +342,17 @@ vector<State> merge(vector<State> &first, vector<State> &second){
 
 }
 
-vector<State> a_star(vector <vector<Cell> > &map, vector<Aircraft>& aircrafts){
+vector<State> a_star(vector <vector<Cell> > &map, vector<Aircraft>& aircrafts, int heuristic, unsigned long& nodes){
+    /*
+     * perform A* search for finding the routs for aircrafts on map using provided heuristic
+     * each plane has its initial and goal location
+     * no plane can be in the same map cell simultaneously, or can swap positions
+     */
     vector< State > openSet;  // used for states we opened
     vector< State > closedSet;  // used for states we already transited(expanded)
     State tmp;
     tmp.aircrafts = aircrafts; // initial state
-    tmp.h = getHeuristic(tmp);
+    tmp.h = getHeuristic(tmp, heuristic);
     openSet.push_back(tmp);
     unordered_map<State, State> cameFrom; // to keep track from which state we got to this one
     vector<State> neighbours;
@@ -335,14 +366,14 @@ vector<State> a_star(vector <vector<Cell> > &map, vector<Aircraft>& aircrafts){
             final = current;
             break;
         }
-        neighbours = getNeighbourState(current, map);  // generate all neighbours states(one plane is moved)
+        neighbours = getNeighbourState(current, map, heuristic);  // generate all neighbours states(one plane is moved)
         for (State neighbour: neighbours){
             auto it = find(closedSet.begin(), closedSet.end(), neighbour);
             if (it != closedSet.end()) // if neighbour is in closed set, we do not consider it
                 neighbours.erase(find(neighbours.begin(), neighbours.end(), neighbour));
             else {
                 it = find(openSet.begin(), openSet.end(), neighbour);
-                if (it != openSet.end()) { // if it is in open and if we get faster, set new g
+                if (it != openSet.end()) { // if it is in open and if we get to it faster, set new g
                     if (it->g > neighbour.g) {
                         it->g = neighbour.g;
                         cameFrom[neighbour] = current;
@@ -385,53 +416,52 @@ vector<State> a_star(vector <vector<Cell> > &map, vector<Aircraft>& aircrafts){
         }
     }
     reverse(path.begin(), path.end()); // reverse it to have from initial to final one
-
+    nodes = closedSet.size() + openSet.size();
     return path;
 
 }
 
 void printPair(ofstream& outFile, pair<int, int> p){
+    /*
+     * print pair to the output stream
+     */
     outFile << "(" << p.first << ", " << p.second << ")";
 }
 
 void getOperation(ofstream& outFile, pair<int, int> before, pair<int, int> after){
+    /*
+     * print operation performed moving from one coordinate to another to the output stream
+     */
     if (after.first == before.first && after.second == before.second) {
         outFile << " w "; // Both pairs are the same
     } else if (after.first < before.first) {
-        outFile << " ↑ " ; // Second pair is to the left of the first
+        outFile << " ↑ " ; // after is above before
     } else if (after.first > before.first) {
-        outFile << " ↓ " ; // Second pair is to the right of the first
+        outFile << " ↓ " ; // after is below before
     } else if (after.second < before.second) {
-        outFile << " ← " ; // Second pair is below the first
+        outFile << " ← " ; // after is to the left from before
     } else if (after.second > before.second) {
-        outFile << " → " ; // Second pair is above the first
+        outFile << " → " ; // after is to the right from before
     }
 }
 
-int main(){
-    string filename = "map1.csv";
-    int n;
-    vector<Aircraft> aircrafts;  // vector to store planes
-    vector<vector<Cell> > map;
-
-    if (readMapCSV(filename, n, aircrafts, map)) {
-        cout << "Fine\n";
-    } else {
-        cerr << "Failed to read the map file.\n";
-    }
-    vector<State> path = a_star(map, aircrafts);
-
-    // Open file for writing
-    ofstream outFile("map-1.output");
+bool output(string& outputFilePath, vector<State> &path){
+    /*
+     * output to the file the path in specific format
+     * each line corresponds to path of certain plain
+     * positions at time t are shown as location tuple
+     * and the movement of plane is shown by arrows
+     */
+    ofstream outFile(outputFilePath);
     if (!outFile) {
         cerr << "Error opening file for writing!" << std::endl;
-        return 1; // Exit with error code
+        return false; // Exit with error code
     }
 
-    for (int i=0; i<aircrafts.size(); i++){
-        printPair(outFile, aircrafts[i].initialPosition.coordinates);
+    for (int i=0; i<path[0].aircrafts.size(); i++){
+        printPair(outFile, path[0].aircrafts[i].initialPosition.coordinates);
         for (int j=1; j<path.size(); j++){
-            if (path[j].aircrafts[i].time != path[j-1].aircrafts[i].time) {// if plane moved in time
+            if (path[j].aircrafts[i].time != path[j-1].aircrafts[i].time) { // if plane moved in time
                 getOperation(outFile, path[j-1].aircrafts[i].currentPosition.coordinates,
                              path[j].aircrafts[i].currentPosition.coordinates);
                 printPair(outFile, path[j].aircrafts[i].currentPosition.coordinates);
@@ -442,14 +472,64 @@ int main(){
 
     // Close the file
     outFile.close();
-    /*
-    for (auto el: path){
-        for (auto i: el.aircrafts){
-            cout << i.time << ": (" << i.currentPosition.coordinates.first
-            << ", " << i.currentPosition.coordinates.second << "), ";
-        }
-        cout << endl;
+    return true;
+}
+
+int main(int argc, char* argv[]){
+    // Check if the correct number of arguments is provided
+    if (argc != 3) {
+        cerr << "Usage: " << argv[0] << " <file_path> <arg>\n";
+        return 1; // Exit with error code
     }
-     */
+    string filePath = argv[1];
+    int heuristic;
+    try {
+        heuristic = std::stoi(argv[2]);
+    } catch (const std::invalid_argument& e) {
+        cerr << "Error: Argument must be an integer.\n";
+        return 1; // Exit with error code
+    } catch (const std::out_of_range& e) {
+        cerr << "Error: Argument out of range for an integer.\n";
+        return 1; // Exit with error code
+    }
+    vector<Aircraft> aircrafts;  // vector to store planes
+    vector<vector<Cell> > map;
+
+    if (!readMapCSV(filePath, aircrafts, map))
+        cerr << "Failed to read the map file.\n";
+
+
+    unsigned long nodes = 0;
+    auto start = chrono::high_resolution_clock::now();
+    vector<State> path = a_star(map, aircrafts, heuristic, nodes);
+    auto end = chrono::high_resolution_clock::now();
+
+    // Calculate the duration
+    chrono::duration<double> duration = end - start;
+
+    string outputFilePath = filePath;
+    size_t lastDot = outputFilePath.find_last_of('.');
+    outputFilePath.replace(lastDot, string::npos, "-" + to_string(heuristic) + ".output");
+
+
+    if (!output(outputFilePath, path))
+        cerr << "Failed to write the map file.\n";
+
+
+    string statFilePath = filePath;
+    lastDot = statFilePath.find_last_of('.');
+    statFilePath.replace(lastDot, string::npos, "-" + to_string(heuristic) + ".stat");
+
+    ofstream outFile(statFilePath);
+    if (!outFile) {
+        cerr << "Error opening file for stats!" << std::endl;
+        return 1;
+    }
+    outFile << "Total time: " << duration.count() << 's' << endl;
+    outFile << "Makespan: " << path.size() << endl; // States to reach goal
+    outFile << "Init heuristic: " << path[0].h << endl;
+    outFile << "Nodes expanded: " << nodes << endl;
+    outFile.close();
+
     return 0;
 }
